@@ -1,0 +1,26 @@
+# Mengabaikan folder dependency lokal
+node_modules
+npm-debug.log
+
+# Mengabaikan hasil build lokal agar tidak menimpa build di dalam Docker
+.next
+out
+build
+
+# Mengabaikan file konfigurasi environment (untuk keamanan/mencegah kebocoran rahasia)
+.env
+.env*.local
+.env.development
+.env.production
+
+# Mengabaikan file sistem dan repository
+.git
+.gitignore
+.dockerignore
+Dockerfile
+
+# Mengabaikan file dokumentasi dan cache
+README.md
+.DS_Store
+.vscode
+coverage

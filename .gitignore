@@ -1,0 +1,19 @@
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+!terraform/terraform.tfvars.example
+terraform/crash.log
+
+# Rahasia
+*.pem
+id_*
+gitlab-infra-*
+.env
+.env.*
+
+# Node / Next.js
+app/node_modules/
+app/.next/
+app/out/

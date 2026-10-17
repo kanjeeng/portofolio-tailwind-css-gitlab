@@ -1,0 +1,10 @@
+# Salin menjadi terraform.tfvars lalu sesuaikan
+aws_region        = "ap-southeast-1"
+developer_ip_cidr = "203.0.113.10/32" # ganti dengan IP publik Anda: curl -s https://checkip.amazonaws.com
+
+runner_instance_type = "t3.micro"
+stage_instance_type  = "t3.micro"
+
+# Sesuaikan absolute path dari key public nya
+runner_public_key_path = "~/.ssh/aws-infra-staging-runner.pub"
+deploy_public_key_path = "~/.ssh/aws-infra-staging-deploy.pub"

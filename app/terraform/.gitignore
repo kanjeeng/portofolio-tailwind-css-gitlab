@@ -1,0 +1,14 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!*.tfvars.example
+.terraform.tfstate.lock.info
+
+# Kunci privat tidak boleh pernah masuk repositori
+*.pem
+id_*
+aws-infra-*
+!*.pub

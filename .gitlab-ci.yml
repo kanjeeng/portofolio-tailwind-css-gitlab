@@ -1,0 +1,143 @@
+# =====================================================================
+# Pipeline CI/CD - Portofolio Next.js
+# Runner  : Self-Hosted (tag aws-selfhosted), executor shell
+# Prinsip : build once, promote many
+# =====================================================================
+
+stages:
+  - build
+  - push-staging
+  - deploy-staging
+  - push-production
+  - deploy-production
+
+# Pipeline hanya berjalan untuk push/merge ke main atau "Run pipeline" di main
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")'
+
+default:
+  tags:
+    - aws-selfhosted
+
+variables:
+  GIT_DEPTH: "1"
+  IMAGE_SHA: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  IMAGE_STAGING: "$CI_REGISTRY_IMAGE:staging"
+  IMAGE_PRODUCTION: "$CI_REGISTRY_IMAGE:production"
+
+# ---------------------------------------------------------------------
+# Template deploy: SSH ke Server Deployment lewat IP privat
+# ---------------------------------------------------------------------
+.deploy-template:
+  script:
+    - chmod 600 "$SSH_PRIVATE_KEY"
+    - |
+      ssh -i "$SSH_PRIVATE_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20 "$DEPLOY_USER@$DEPLOY_HOST" bash -s <<EOF
+      set -e
+      echo "$REGISTRY_DEPLOY_TOKEN" | docker login -u "$REGISTRY_DEPLOY_USER" --password-stdin "$CI_REGISTRY"
+      docker pull "$TARGET_IMAGE"
+      docker rm -f "$APP_NAME" 2>/dev/null || true
+      docker run -d --name "$APP_NAME" --restart unless-stopped \
+        -p "$APP_PORT:3000" \
+        -e NODE_ENV=production \
+        -e RESEND_API_KEY="$APP_RESEND_KEY" \
+        -e CONTACT_TO_EMAIL="$CONTACT_TO_EMAIL" \
+        "$TARGET_IMAGE"
+      docker logout "$CI_REGISTRY"
+      for i in \$(seq 1 20); do
+        if curl -fsS -o /dev/null "http://127.0.0.1:$APP_PORT/"; then
+          echo "Health check OK ($APP_NAME)"
+          exit 0
+        fi
+        sleep 3
+      done
+      echo "Health check GAGAL ($APP_NAME)"
+      docker logs --tail 50 "$APP_NAME"
+      exit 1
+      EOF
+
+# ---------------------------------------------------------------------
+# 1. BUILD (otomatis)
+# ---------------------------------------------------------------------
+build-image:
+  stage: build
+  script:
+    - echo "$CI_JOB_TOKEN" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - cd app
+    - >
+      docker build
+      --build-arg RESEND_API_KEY=re_build_placeholder
+      --build-arg CONTACT_TO_EMAIL="$CONTACT_TO_EMAIL"
+      --build-arg APP_VERSION="$CI_COMMIT_SHORT_SHA"
+      -t "$IMAGE_SHA" .
+  after_script:
+    - docker logout "$CI_REGISTRY" || true
+
+# ---------------------------------------------------------------------
+# 2. PUSH STAGING (otomatis)
+# ---------------------------------------------------------------------
+push-staging:
+  stage: push-staging
+  needs: ["build-image"]
+  script:
+    - echo "$CI_JOB_TOKEN" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker tag "$IMAGE_SHA" "$IMAGE_STAGING"
+    - docker push "$IMAGE_SHA"
+    - docker push "$IMAGE_STAGING"
+  after_script:
+    - docker logout "$CI_REGISTRY" || true
+
+# ---------------------------------------------------------------------
+# 3. DEPLOY STAGING (otomatis) - port 3001
+# ---------------------------------------------------------------------
+deploy-staging:
+  stage: deploy-staging
+  needs: ["push-staging"]
+  extends: .deploy-template
+  resource_group: staging
+  variables:
+    APP_NAME: "portofolio-staging"
+    APP_PORT: "3001"
+    TARGET_IMAGE: "$CI_REGISTRY_IMAGE:staging"
+    APP_RESEND_KEY: "$RESEND_API_KEY_STAGING"
+  environment:
+    name: staging
+    url: "http://$DEPLOY_PUBLIC_IP:3001"
+
+# ---------------------------------------------------------------------
+# 4. PUSH PRODUCTION (MANUAL) - promosi image yang sama, tanpa build ulang
+# ---------------------------------------------------------------------
+push-production:
+  stage: push-production
+  needs: ["deploy-staging"]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: false
+  script:
+    - echo "$CI_JOB_TOKEN" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker pull "$IMAGE_SHA"
+    - docker tag "$IMAGE_SHA" "$IMAGE_PRODUCTION"
+    - docker push "$IMAGE_PRODUCTION"
+  after_script:
+    - docker logout "$CI_REGISTRY" || true
+
+# ---------------------------------------------------------------------
+# 5. DEPLOY PRODUCTION - port 3000 (berjalan setelah push-production disetujui)
+# ---------------------------------------------------------------------
+deploy-production:
+  stage: deploy-production
+  needs: ["push-production"]
+  extends: .deploy-template
+  resource_group: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  variables:
+    APP_NAME: "portofolio-production"
+    APP_PORT: "3000"
+    TARGET_IMAGE: "$CI_REGISTRY_IMAGE:production"
+    APP_RESEND_KEY: "$RESEND_API_KEY_PROD"
+  environment:
+    name: production
+    url: "http://$DEPLOY_PUBLIC_IP:3000"
